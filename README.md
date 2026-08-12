@@ -68,6 +68,35 @@ ruff format .           # format
 ruff check --fix .      # lint
 ```
 
+## API
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/health/` | Liveness/readiness; 503 when a dependency is down |
+| `GET` | `/api/products/` | Active products, newest first |
+| `POST` | `/api/products/` | Create a product |
+| `GET` | `/api/products/<id>/` | One active product |
+| `PUT` / `PATCH` | `/api/products/<id>/` | Replace / partially update; reaches inactive products |
+| `DELETE` | `/api/products/<id>/` | Delete permanently |
+
+Two things a consumer will otherwise get wrong:
+
+- **Prices are JSON strings** (`"12.50"`, not `12.50`). Parse with a decimal type — parsing into
+  a float reintroduces the rounding drift that exact decimal storage exists to prevent.
+- **The product listing is unpaginated** and returns a bare array. Adding pagination later turns
+  that array into an object, which breaks clients written against the current shape.
+
+Status codes split by *kind* of failure: a malformed request shape is `400` with DRF's
+field-keyed body, while a broken business rule (price at or below zero, over-precise price,
+negative stock) is `422` with a `detail` message. An inactive product and one that never existed
+both return an identical `404`.
+
+> ⚠️ **The product write operations have no authentication.** Anyone who can reach the service can
+> rewrite prices or delete the catalog. This is deliberate for local development (FR-025) and is a
+> release blocker — do not deploy until writes are restricted to administrators.
+
+Full contract: [`specs/001-product-catalog/contracts/products-api.yaml`](specs/001-product-catalog/contracts/products-api.yaml).
+
 ## Architecture
 
 Dependencies point inward. `domain/` and `application/` must survive a swap of Django, DRF,
