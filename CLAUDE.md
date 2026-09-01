@@ -5,9 +5,13 @@ Guidance for Claude Code working in this repository.
 ## Status
 
 The Django scaffold exists. `manage.py`, `config/` (settings, urls, container), the four
-architecture layers, `tests/`, and `scripts/` are all in place, and `GET /api/health/` is the
-one endpoint currently wired end to end. Build within the existing layout rather than creating
-a new one.
+architecture layers, `tests/`, and `scripts/` are all in place. Two contexts are wired end to
+end: `health` (`GET /api/health/`) and `catalog` (`/api/products/`, full CRUD). Build within the
+existing layout rather than creating a new one.
+
+`infrastructure.db` is the only Django app in `INSTALLED_APPS`; `domain/` and `application/` are
+plain Python packages. The catalog's write endpoints deliberately carry no authentication
+(FR-025) — that is a release blocker, tracked in `specs/001-product-catalog/`.
 
 Governance for this repo lives in `.specify/memory/constitution.md`. Where this file and the
 constitution disagree, the constitution wins and this file must be corrected.
@@ -25,9 +29,9 @@ constitution disagree, the constitution wins and this file must be corrected.
 
 ```
 config/           # Django wiring only — settings.py, urls.py, container.py
-domain/           # entities, value objects, domain exceptions. Zero framework imports.
-application/      # use cases + ABC ports (interfaces.py, services.py, dtos.py). Zero framework imports.
-infrastructure/   # db/ (models, repositories, migrations, probes), external/ clients
+domain/           # <context>/ — entities.py, exceptions.py. Zero framework imports.
+application/      # <context>/ — interfaces.py (ABC ports), services.py, dtos.py. Zero framework imports.
+infrastructure/   # db/ (apps.py, admin.py, models/, repositories/, migrations/, probes), external/
 interface/        # api/<context>/ — serializers.py, views.py, urls.py
 tests/            # mirrors the layer it tests: tests/application/..., tests/interface/api/...
 scripts/          # check_architecture.sh — the pre-push boundary check

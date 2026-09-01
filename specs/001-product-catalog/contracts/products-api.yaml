@@ -1,0 +1,391 @@
+openapi: 3.1.0
+
+info:
+  title: Café Altura — Product Catalog API
+  version: 1.0.0
+  description: |
+    Product catalog for the Café Altura backend.
+
+    **Security status — read this before deploying.** The write operations in this contract
+    (`POST`, `PUT`, `PATCH`, `DELETE`) have no authentication and no authorization. Any caller who
+    can reach the service can rewrite prices, alter stock figures, or delete the catalog. This is a
+    deliberate, temporary state for local development, recorded as FR-025 in the feature
+    specification. Restricting writes to administrators is a release blocker, not a follow-up.
+
+    **Prices are JSON strings, not numbers** — `"12.50"`, not `12.50`. This is deliberate. Parsing
+    a price into a binary float reintroduces the rounding drift that exact decimal storage exists
+    to prevent. Clients must parse it with a decimal type.
+
+    **Listings are unpaginated** in this version: `GET /products/` returns a bare array. Adding
+    pagination later changes that array into an object and breaks clients written against this
+    contract.
+
+servers:
+  - url: http://localhost:8000/api
+    description: Local development
+
+tags:
+  - name: products
+    description: Catalog products
+
+paths:
+  /products/:
+    get:
+      tags: [products]
+      summary: List active products
+      description: |
+        Returns every active product, ordered by creation time, most recently created first.
+        Inactive products are never returned. An empty catalog returns an empty array, not an error.
+      operationId: listProducts
+      responses:
+        "200":
+          description: The active catalog
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+              examples:
+                populated:
+                  summary: Two active products, newest first
+                  value:
+                    - id: 2
+                      name: Geisha Lavado
+                      description: Lote de altura, cosecha 2026.
+                      price: "24.00"
+                      stock: 12
+                      image_url: https://images.example.com/geisha.jpg
+                      is_active: true
+                    - id: 1
+                      name: Espresso de la Casa
+                      description: ""
+                      price: "12.50"
+                      stock: 40
+                      image_url: ""
+                      is_active: true
+                empty:
+                  summary: Empty catalog
+                  value: []
+
+    post:
+      tags: [products]
+      summary: Create a product
+      description: |
+        Creates a product. New products are active immediately.
+
+        Two distinct failure modes, and the difference is not cosmetic: a malformed *shape*
+        (missing name, wrong type, name over 200 characters, unparseable image address) is a
+        **400**, while a broken business *rule* (price at or below zero, price out of range or
+        over-precise, negative stock) is a **422**.
+      operationId: createProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductWrite"
+            examples:
+              minimal:
+                summary: Only the required fields
+                value:
+                  name: Espresso de la Casa
+                  price: "12.50"
+              full:
+                summary: Every writable field
+                value:
+                  name: Geisha Lavado
+                  description: Lote de altura, cosecha 2026.
+                  price: "24.00"
+                  stock: 12
+                  image_url: https://images.example.com/geisha.jpg
+                  is_active: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ShapeError"
+        "422":
+          $ref: "#/components/responses/RuleError"
+
+  /products/{product_id}/:
+    parameters:
+      - $ref: "#/components/parameters/ProductId"
+
+    get:
+      tags: [products]
+      summary: Retrieve one active product
+      description: |
+        Returns a single active product.
+
+        A product that is inactive and one that never existed both return **404**, and the two are
+        deliberately indistinguishable to the caller.
+      operationId: getProduct
+      responses:
+        "200":
+          description: The product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      tags: [products]
+      summary: Replace a product
+      description: |
+        Replaces every writable field. Unlike `GET`, this reaches inactive products too — otherwise
+        a deactivated product could never be reactivated through the API.
+      operationId: replaceProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductWrite"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ShapeError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/RuleError"
+
+    patch:
+      tags: [products]
+      summary: Update part of a product
+      description: |
+        Updates only the supplied fields; omitted fields keep their stored values. Reaches inactive
+        products, as `PUT` does.
+      operationId: updateProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductPatch"
+            examples:
+              deactivate:
+                summary: Withdraw a product from sale
+                value:
+                  is_active: false
+              restock:
+                summary: Correct a stock figure
+                value:
+                  stock: 25
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ShapeError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/RuleError"
+
+    delete:
+      tags: [products]
+      summary: Delete a product permanently
+      description: |
+        Removes the product and its history. Deactivating with `PATCH {"is_active": false}` is the
+        intended way to withdraw a product from sale; this operation is irreversible.
+      operationId: deleteProduct
+      responses:
+        "204":
+          description: Deleted; no body
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    ProductId:
+      name: product_id
+      in: path
+      required: true
+      description: The product's identifier
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+
+  schemas:
+    Product:
+      type: object
+      description: A product as returned by the API. Exactly seven fields — the stored creation
+        time is not exposed.
+      required: [id, name, description, price, stock, image_url, is_active]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+          examples: [1]
+        name:
+          type: string
+          maxLength: 200
+          examples: [Espresso de la Casa]
+        description:
+          type: string
+          description: Empty string when not set; never null.
+          examples: [""]
+        price:
+          type: string
+          description: |
+            An exact decimal with two decimal places, serialized as a string. Greater than zero and
+            at most 99999999.99. Parse with a decimal type, never a float.
+          pattern: '^\d{1,8}\.\d{2}$'
+          examples: ["12.50"]
+        stock:
+          type: integer
+          minimum: 0
+          examples: [40]
+        image_url:
+          type: string
+          description: |
+            Address of an image held in an external store. Empty string when not set. The service
+            stores no image data and does not check that the address resolves — a broken address
+            still returns normally here and degrades in the client.
+          examples: [https://images.example.com/espresso.jpg]
+        is_active:
+          type: boolean
+          description: Inactive products are absent from every read operation.
+          examples: [true]
+
+    ProductWrite:
+      type: object
+      description: Request body for create and replace.
+      required: [name, price]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          default: ""
+        price:
+          type: string
+          pattern: '^\d{1,8}\.\d{1,2}$'
+        stock:
+          type: integer
+          minimum: 0
+          default: 0
+        image_url:
+          type: string
+          format: uri
+          default: ""
+        is_active:
+          type: boolean
+          default: true
+
+    ProductPatch:
+      type: object
+      description: Request body for a partial update. Every field is optional; omitted fields are
+        left unchanged.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+        price:
+          type: string
+          pattern: '^\d{1,8}\.\d{1,2}$'
+        stock:
+          type: integer
+          minimum: 0
+        image_url:
+          type: string
+          format: uri
+        is_active:
+          type: boolean
+
+    FieldErrors:
+      type: object
+      description: DRF's field-level error body. Each key is a field name; each value is a list of
+        messages.
+      additionalProperties:
+        type: array
+        items:
+          type: string
+      examples:
+        - name: [This field is required.]
+          image_url: [Enter a valid URL.]
+
+    Detail:
+      type: object
+      required: [detail]
+      additionalProperties: false
+      properties:
+        detail:
+          type: string
+
+  responses:
+    ShapeError:
+      description: |
+        The request body is malformed — a required field is missing, a value has the wrong type, the
+        name exceeds 200 characters, or the image address is not a valid URL.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/FieldErrors"
+          examples:
+            missingName:
+              summary: Name omitted
+              value:
+                name: [This field is required.]
+            badUrl:
+              summary: Image address is not a URL
+              value:
+                image_url: [Enter a valid URL.]
+
+    RuleError:
+      description: |
+        The body is well-formed but breaks a business rule: a price at or below zero, a price above
+        99999999.99 or with more than two decimal places, or a negative stock.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Detail"
+          examples:
+            zeroPrice:
+              summary: Price of zero
+              value:
+                detail: El precio debe ser mayor a cero.
+            overPrecise:
+              summary: More than two decimal places
+              value:
+                detail: El precio admite como máximo dos decimales.
+
+    NotFound:
+      description: |
+        No such product on this path. Returned both when the product does not exist and when it is
+        inactive on a read operation; the two cases are indistinguishable by design.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Detail"
+          examples:
+            missing:
+              value:
+                detail: No such product.
